@@ -1,0 +1,58 @@
+{
+  "name": "kanban-sync-engine",
+  "version": "0.1.0",
+  "description": "Sync TASKS.md with GitHub Issues and Projects v2",
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "kanban-sync-engine": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "pack:check": "npm pack --dry-run",
+    "prepack": "npm run clean && npm run build",
+    "dev:status": "npm run build && node dist/cli.js status --config kanban-sync-engine.dev.json",
+    "dev:pull": "npm run build && node dist/cli.js pull --dry-run --config kanban-sync-engine.dev.json",
+    "dev:push": "npm run build && node dist/cli.js push --dry-run --config kanban-sync-engine.dev.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alotth/kanban-sync-engine.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alotth/kanban-sync-engine/issues"
+  },
+  "homepage": "https://github.com/alotth/kanban-sync-engine#readme",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "keywords": [
+    "tasks",
+    "sync",
+    "github",
+    "kanban",
+    "markdown"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  }
+}
