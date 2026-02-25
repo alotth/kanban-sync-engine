@@ -1,5 +1,5 @@
 import { spawnSync } from 'child_process';
-import { GitHubIssue, ProjectItemStatus, SyncConfig } from './types';
+import { GitHubIssue, ProjectIssueItem, ProjectItemDates, ProjectItemStatus, SyncConfig } from './types';
 
 function runGh(args: string[]): string {
   const result = spawnSync('gh', args, { encoding: 'utf8' });
@@ -112,6 +112,107 @@ export function getProjectStatuses(config: SyncConfig): ProjectItemStatus[] {
   return out;
 }
 
+export function getProjectIssueItems(config: SyncConfig): ProjectIssueItem[] {
+  if (!config.projectId) return [];
+
+  const query = `
+    query($projectId: ID!) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          items(first: 100) {
+            nodes {
+              id
+              content {
+                ... on Issue {
+                  number
+                  repository {
+                    name
+                    owner { login }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = ghApiJson<any>(['graphql', '-f', `query=${query}`, '-f', `projectId=${config.projectId}`]);
+  const nodes = response?.data?.node?.items?.nodes || [];
+  const out: ProjectIssueItem[] = [];
+
+  for (const node of nodes) {
+    const issue = node?.content;
+    if (!issue || issue.repository?.owner?.login !== config.owner || issue.repository?.name !== config.repo) continue;
+    out.push({ issueNumber: issue.number, itemId: node.id });
+  }
+
+  return out;
+}
+
+export function getProjectDates(config: SyncConfig): ProjectItemDates[] {
+  if (!config.projectId) return [];
+  const hasDateField = Boolean(config.startDateFieldId || config.dueDateFieldId || config.completedDateFieldId);
+  if (!hasDateField) return [];
+
+  const query = `
+    query($projectId: ID!) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          items(first: 100) {
+            nodes {
+              id
+              content {
+                ... on Issue {
+                  number
+                  repository {
+                    name
+                    owner { login }
+                  }
+                }
+              }
+              fieldValues(first: 50) {
+                nodes {
+                  ... on ProjectV2ItemFieldDateValue {
+                    date
+                    field {
+                      ... on ProjectV2Field {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = ghApiJson<any>(['graphql', '-f', `query=${query}`, '-f', `projectId=${config.projectId}`]);
+  const nodes = response?.data?.node?.items?.nodes || [];
+  const out: ProjectItemDates[] = [];
+
+  for (const node of nodes) {
+    const issue = node?.content;
+    if (!issue || issue.repository?.owner?.login !== config.owner || issue.repository?.name !== config.repo) continue;
+
+    const row: ProjectItemDates = { issueNumber: issue.number, itemId: node.id };
+    for (const fv of node.fieldValues?.nodes || []) {
+      const fieldId = fv?.field?.id;
+      if (!fieldId || typeof fv?.date !== 'string') continue;
+      if (config.startDateFieldId && fieldId === config.startDateFieldId) row.start = fv.date;
+      if (config.dueDateFieldId && fieldId === config.dueDateFieldId) row.due = fv.date;
+      if (config.completedDateFieldId && fieldId === config.completedDateFieldId) row.completed = fv.date;
+    }
+    out.push(row);
+  }
+
+  return out;
+}
+
 export function getStatusOptionIds(config: SyncConfig): Record<string, string> {
   if (!config.projectId || !config.statusFieldId) return {};
   const query = `
@@ -189,5 +290,59 @@ export function setProjectItemStatus(config: SyncConfig, itemId: string, optionI
     '-f', `itemId=${itemId}`,
     '-f', `fieldId=${config.statusFieldId}`,
     '-f', `optionId=${optionId}`
+  ]);
+}
+
+export function setProjectItemDate(config: SyncConfig, itemId: string, fieldId: string, date: string): void {
+  if (!config.projectId) return;
+  const mutation = `
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $date: Date!) {
+      updateProjectV2ItemFieldValue(
+        input: {
+          projectId: $projectId,
+          itemId: $itemId,
+          fieldId: $fieldId,
+          value: { date: $date }
+        }
+      ) {
+        projectV2Item {
+          id
+        }
+      }
+    }
+  `;
+  ghApiJson<any>([
+    'graphql',
+    '-f', `query=${mutation}`,
+    '-f', `projectId=${config.projectId}`,
+    '-f', `itemId=${itemId}`,
+    '-f', `fieldId=${fieldId}`,
+    '-f', `date=${date}`
+  ]);
+}
+
+export function clearProjectItemFieldValue(config: SyncConfig, itemId: string, fieldId: string): void {
+  if (!config.projectId) return;
+  const mutation = `
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+      clearProjectV2ItemFieldValue(
+        input: {
+          projectId: $projectId,
+          itemId: $itemId,
+          fieldId: $fieldId
+        }
+      ) {
+        projectV2Item {
+          id
+        }
+      }
+    }
+  `;
+  ghApiJson<any>([
+    'graphql',
+    '-f', `query=${mutation}`,
+    '-f', `projectId=${config.projectId}`,
+    '-f', `itemId=${itemId}`,
+    '-f', `fieldId=${fieldId}`
   ]);
 }

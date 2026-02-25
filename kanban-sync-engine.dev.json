@@ -1,21 +1,6 @@
 {
-  "owner": "your-org-or-user",
-  "repo": "your-repo",
-  "projectId": "PVT_kwDOExample",
-  "statusFieldId": "PVTSSF_lADOExample",
-  "startDateFieldId": "PVTF_lADOExampleStart",
-  "dueDateFieldId": "PVTF_lADOExampleDue",
-  "completedDateFieldId": "PVTF_lADOExampleCompleted",
-  "allowedStatuses": [
-    "backlog",
-    "doing",
-    "review",
-    "done",
-    "paused"
-  ],
-  "completionStatuses": [
-    "done"
-  ],
+  "owner": "alotth",
+  "repo": "markdown-kanban-roadmap",
   "statusMap": {
     "backlog": "Backlog",
     "doing": "In Progress",
@@ -23,7 +8,7 @@
     "done": "Done",
     "paused": "Blocked"
   },
-  "tasksFile": "./TASKS.md",
+  "tasksFile": "../example-n-2/TASKS.md",
   "bootstrap": {
     "createMissingDetailFiles": true,
     "defaultStatusForImportedIssues": "backlog",

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { LocalStatus, Task, TaskBoard } from './types';
+import { normalizeStatus } from './statuses';
 import { parseArray, readUtf8, toArrayString, writeUtf8 } from './utils';
 
 const LEGACY_SECTIONS: Record<string, LocalStatus> = {
@@ -12,9 +13,8 @@ const LEGACY_SECTIONS: Record<string, LocalStatus> = {
 };
 
 function parseStatus(value: string | undefined, fallback: LocalStatus = 'backlog'): LocalStatus {
-  const normalized = (value || '').trim().toLowerCase();
-  if (normalized in LEGACY_SECTIONS) return normalized as LocalStatus;
-  return fallback;
+  const normalized = normalizeStatus(value);
+  return normalized || fallback;
 }
 
 function taskFromTitle(title: string, statusFallback: LocalStatus): Task {

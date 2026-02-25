@@ -1,6 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { SyncConfig, SyncOptions } from './types';
+import {
+  getAllowedStatuses,
+  getCompletionStatuses,
+  normalizeStatus,
+  normalizeStatusMap,
+  validateStatusConfig
+} from './statuses';
 
 export function loadConfig(options: SyncOptions = {}): { config: SyncConfig; configPath: string } {
   const cwd = process.cwd();
@@ -24,6 +31,16 @@ export function loadConfig(options: SyncOptions = {}): { config: SyncConfig; con
   if (!parsed.statusMap) {
     throw new Error('Config must include statusMap.');
   }
+
+  parsed.statusMap = normalizeStatusMap(parsed.statusMap);
+  parsed.allowedStatuses = getAllowedStatuses(parsed);
+  parsed.completionStatuses = getCompletionStatuses(parsed);
+
+  if (parsed.bootstrap?.defaultStatusForImportedIssues) {
+    parsed.bootstrap.defaultStatusForImportedIssues = normalizeStatus(parsed.bootstrap.defaultStatusForImportedIssues);
+  }
+
+  validateStatusConfig(parsed);
 
   return { config: parsed, configPath };
 }

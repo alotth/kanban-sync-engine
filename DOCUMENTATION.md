@@ -137,7 +137,67 @@ Then configure in `kanban-sync-engine.config.json`:
 
 - `projectId`
 - `statusFieldId` (Pipeline field ID)
+- `startDateFieldId` (Project date field for roadmap start)
+- `dueDateFieldId` (Project date field for roadmap target)
+- `completedDateFieldId` (optional Project date field for completion)
 - `statusMap` with 1:1 mapping
+
+Status workflow configuration:
+
+- `allowedStatuses` (optional)
+  - omitted: defaults to `backlog,doing,review,done,paused`
+  - provided: only listed statuses are valid in `TASKS.md`
+- `completionStatuses` (optional)
+  - omitted: defaults to `done`
+  - must be subset of `allowedStatuses`
+- `bootstrap.defaultStatusForImportedIssues` must also be in `allowedStatuses`
+
+Validation checks performed at runtime:
+
+- invalid statuses in `TASKS.md`
+- missing status keys in `statusMap`
+- invalid `completionStatuses`
+
+Example (custom full replacement):
+
+```json
+{
+  "allowedStatuses": ["inbox", "design", "build", "qa", "released"],
+  "completionStatuses": ["released"],
+  "statusMap": {
+    "inbox": "Inbox",
+    "design": "Design",
+    "build": "Build",
+    "qa": "QA",
+    "released": "Released"
+  },
+  "bootstrap": {
+    "defaultStatusForImportedIssues": "inbox"
+  }
+}
+```
+
+Example (partial custom + extra status):
+
+```json
+{
+  "allowedStatuses": ["backlog", "doing", "review", "done", "paused", "design"],
+  "completionStatuses": ["done"],
+  "statusMap": {
+    "backlog": "Backlog",
+    "doing": "Doing",
+    "review": "Review",
+    "done": "Done",
+    "paused": "Paused",
+    "design": "Design"
+  }
+}
+```
+
+Roadmap note:
+
+- GitHub Roadmap bars are rendered from Project date fields.
+- Values present only in issue body (`start`/`due`) do not create roadmap bars.
 
 Optional but recommended: link the project to the repository:
 

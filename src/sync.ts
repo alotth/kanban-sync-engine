@@ -3,17 +3,20 @@ import * as path from 'path';
 import { loadConfig } from './config';
 import {
   addIssueToProject,
+  clearProjectItemFieldValue,
   createIssue,
+  getProjectDates,
+  getProjectIssueItems,
   getIssues,
   getProjectStatuses,
   getStatusOptionIds,
+  setProjectItemDate,
   setProjectItemStatus,
   updateIssue
 } from './github';
 import { ensureDetailFile, parseTasksFile, writeBoard } from './markdown';
 import {
   GitHubIssue,
-  LocalStatus,
   StatusReport,
   SyncConfig,
   SyncState,
@@ -21,6 +24,14 @@ import {
   SyncOptions,
   Task
 } from './types';
+import {
+  firstCompletionStatus,
+  getAllowedStatuses,
+  isCompletionStatus,
+  normalizeStatus,
+  normalizeTaskCompletion,
+  validateTaskStatuses
+} from './statuses';
 import { ensureDir, parseExternalIssueNumber, sha256, todayISO, unique } from './utils';
 
 function resolveTasksFile(configPath: string, config: SyncConfig, options: SyncOptions): string {
@@ -209,12 +220,16 @@ function parseIssueNumber(task: Task): number | null {
   return parseExternalIssueNumber(task.externalId);
 }
 
-function invertStatusMap(map: SyncConfig['statusMap']): Record<string, LocalStatus> {
-  const out: Record<string, LocalStatus> = {};
+function invertStatusMap(map: SyncConfig['statusMap']): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const [local, remote] of Object.entries(map)) {
-    out[remote] = local as LocalStatus;
+    out[remote] = local;
   }
   return out;
+}
+
+function closedIssueFallbackStatus(config: SyncConfig, fallback: string): string {
+  return firstCompletionStatus(config) || fallback;
 }
 
 function maybePrintJson(value: unknown, json?: boolean): boolean {
@@ -225,6 +240,10 @@ function maybePrintJson(value: unknown, json?: boolean): boolean {
 
 function requireGhProject(config: SyncConfig): boolean {
   return Boolean(config.projectId && config.statusFieldId);
+}
+
+function requireGhProjectItems(config: SyncConfig): boolean {
+  return Boolean(config.projectId);
 }
 
 function nextTaskId(existingIds: string[]): string {
@@ -244,10 +263,19 @@ function buildStatusByIssue(config: SyncConfig): Map<number, string> {
   return map;
 }
 
+function buildDatesByIssue(config: SyncConfig): Map<number, { start?: string; due?: string; completed?: string }> {
+  const map = new Map<number, { start?: string; due?: string; completed?: string }>();
+  for (const row of getProjectDates(config)) {
+    map.set(row.issueNumber, { start: row.start, due: row.due, completed: row.completed });
+  }
+  return map;
+}
+
 export function statusCommand(options: SyncOptions = {}): StatusReport {
   const { config, configPath } = loadConfig(options);
   const tasksFilePath = resolveTasksFile(configPath, config, options);
   const board = parseTasksFile(tasksFilePath);
+  validateTaskStatuses(board.tasks, config);
   const issues = getIssues(config);
   const issuesByNumber = new Map<number, GitHubIssue>(issues.map(i => [i.number, i]));
 
@@ -269,7 +297,7 @@ export function statusCommand(options: SyncOptions = {}): StatusReport {
     const remoteProjectStatus = statusByIssue.get(issueNumber);
     const remoteLocalStatus = remoteProjectStatus
       ? (remoteToLocal[remoteProjectStatus] || task.status)
-      : (issue.state === 'closed' ? 'done' : task.status);
+      : (issue.state === 'closed' ? closedIssueFallbackStatus(config, task.status) : task.status);
     if (remoteLocalStatus !== task.status) {
       divergedStatuses.push({ id: task.id, local: task.status, remote: remoteLocalStatus });
     }
@@ -309,11 +337,13 @@ export function pullCommand(options: SyncOptions = {}): void {
   const { config, configPath } = loadConfig(options);
   const tasksFilePath = resolveTasksFile(configPath, config, options);
   const board = parseTasksFile(tasksFilePath);
+  validateTaskStatuses(board.tasks, config);
   const issues = getIssues(config);
   const issuesByNumber = new Map<number, GitHubIssue>(issues.map(i => [i.number, i]));
 
   const remoteToLocal = invertStatusMap(config.statusMap);
   const statusByIssue = requireGhProject(config) ? buildStatusByIssue(config) : new Map<number, string>();
+  const datesByIssue = requireGhProjectItems(config) ? buildDatesByIssue(config) : new Map<number, { start?: string; due?: string; completed?: string }>();
   const state = readSyncState(tasksFilePath);
 
   let changed = 0;
@@ -326,7 +356,7 @@ export function pullCommand(options: SyncOptions = {}): void {
     const remoteStatusName = statusByIssue.get(issueNumber);
     const newStatus = remoteStatusName
       ? (remoteToLocal[remoteStatusName] || task.status)
-      : (issue.state === 'closed' ? 'done' : task.status);
+      : (issue.state === 'closed' ? closedIssueFallbackStatus(config, task.status) : task.status);
     if (newStatus !== task.status) {
       task.status = newStatus;
       changed++;
@@ -334,10 +364,22 @@ export function pullCommand(options: SyncOptions = {}): void {
 
     applyLabelsToTask(task, issue.labels.map(l => l.name));
 
+    const remoteDates = datesByIssue.get(issueNumber);
+    if (remoteDates) {
+      if (config.startDateFieldId) task.start = remoteDates.start;
+      if (config.dueDateFieldId) task.due = remoteDates.due;
+    }
+
     if (issue.milestone?.title) task.milestone = issue.milestone.title;
-    if (task.status === 'done' && issue.closed_at) {
-      task.completed = issue.closed_at.slice(0, 10);
-    } else if (task.status !== 'done') {
+    if (isCompletionStatus(task.status, config)) {
+      if (config.completedDateFieldId && remoteDates?.completed) {
+        task.completed = remoteDates.completed;
+      } else if (!task.completed && issue.closed_at) {
+        task.completed = issue.closed_at.slice(0, 10);
+      } else {
+        normalizeTaskCompletion(task, config, todayISO());
+      }
+    } else {
       task.completed = null;
     }
     task.updated = todayISO();
@@ -361,14 +403,16 @@ export function pushCommand(options: SyncOptions = {}): void {
   const { config, configPath } = loadConfig(options);
   const tasksFilePath = resolveTasksFile(configPath, config, options);
   const board = parseTasksFile(tasksFilePath);
+  validateTaskStatuses(board.tasks, config);
   const issues = getIssues(config);
   const issuesByNumber = new Map<number, GitHubIssue>(issues.map(i => [i.number, i]));
   const state = readSyncState(tasksFilePath);
 
-  const projectEnabled = requireGhProject(config);
-  const statusOptionIds = projectEnabled ? getStatusOptionIds(config) : {};
-  const projectStatuses = projectEnabled ? getProjectStatuses(config) : [];
-  const projectItemIdByIssue = new Map<number, string>(projectStatuses.map(i => [i.issueNumber, i.itemId]));
+  const projectItemsEnabled = requireGhProjectItems(config);
+  const projectStatusEnabled = requireGhProject(config);
+  const statusOptionIds = projectStatusEnabled ? getStatusOptionIds(config) : {};
+  const projectItems = projectItemsEnabled ? getProjectIssueItems(config) : [];
+  const projectItemIdByIssue = new Map<number, string>(projectItems.map(i => [i.issueNumber, i.itemId]));
 
   let created = 0;
   let updated = 0;
@@ -430,7 +474,7 @@ export function pushCommand(options: SyncOptions = {}): void {
       }
     }
 
-    const issueState: 'open' | 'closed' = task.status === 'done' ? 'closed' : 'open';
+    const issueState: 'open' | 'closed' = isCompletionStatus(task.status, config) ? 'closed' : 'open';
     if (options.dryRun) {
       console.log(`[dry-run] update issue #${issueNumber} from task ${task.id}`);
       if (!localDetailChangedFromBase) {
@@ -451,15 +495,31 @@ export function pushCommand(options: SyncOptions = {}): void {
       updated++;
     }
 
-    if (projectEnabled) {
+    if (projectItemsEnabled) {
       const remoteStatusName = config.statusMap[task.status];
       const optionId = statusOptionIds[remoteStatusName];
       if (options.dryRun) {
         console.log(`[dry-run] ensure issue #${issueNumber} is in project`);
-        if (optionId) {
+        if (projectStatusEnabled && optionId) {
           console.log(`[dry-run] set project status for issue #${issueNumber} -> ${remoteStatusName}`);
-        } else {
+        } else if (projectStatusEnabled) {
           console.log(`[dry-run] no matching project status option for '${remoteStatusName}'`);
+        }
+        if (config.startDateFieldId) {
+          console.log(task.start
+            ? `[dry-run] set project start date for issue #${issueNumber} -> ${task.start}`
+            : `[dry-run] clear project start date for issue #${issueNumber}`);
+        }
+        if (config.dueDateFieldId) {
+          console.log(task.due
+            ? `[dry-run] set project due date for issue #${issueNumber} -> ${task.due}`
+            : `[dry-run] clear project due date for issue #${issueNumber}`);
+        }
+        if (config.completedDateFieldId) {
+          const completedDate = isCompletionStatus(task.status, config) ? (task.completed || todayISO()) : null;
+          console.log(completedDate
+            ? `[dry-run] set project completed date for issue #${issueNumber} -> ${completedDate}`
+            : `[dry-run] clear project completed date for issue #${issueNumber}`);
         }
       } else {
         let itemId = projectItemIdByIssue.get(issueNumber);
@@ -470,14 +530,36 @@ export function pushCommand(options: SyncOptions = {}): void {
             projectItemIdByIssue.set(issueNumber, itemId);
           }
         }
-        if (itemId && optionId) {
+        if (itemId && projectStatusEnabled && optionId) {
           setProjectItemStatus(config, itemId, optionId);
+        }
+        if (itemId && config.startDateFieldId) {
+          if (task.start) {
+            setProjectItemDate(config, itemId, config.startDateFieldId, task.start);
+          } else {
+            clearProjectItemFieldValue(config, itemId, config.startDateFieldId);
+          }
+        }
+        if (itemId && config.dueDateFieldId) {
+          if (task.due) {
+            setProjectItemDate(config, itemId, config.dueDateFieldId, task.due);
+          } else {
+            clearProjectItemFieldValue(config, itemId, config.dueDateFieldId);
+          }
+        }
+        if (itemId && config.completedDateFieldId) {
+          const completedDate = isCompletionStatus(task.status, config) ? (task.completed || todayISO()) : null;
+          if (completedDate) {
+            setProjectItemDate(config, itemId, config.completedDateFieldId, completedDate);
+          } else {
+            clearProjectItemFieldValue(config, itemId, config.completedDateFieldId);
+          }
         }
       }
     }
 
     task.updated = todayISO();
-    task.completed = task.status === 'done' ? (task.completed || todayISO()) : null;
+    normalizeTaskCompletion(task, config, todayISO());
   }
 
   if (conflicts.length > 0) {
@@ -519,11 +601,12 @@ export function bootstrapCommand(from: 'local' | 'github', options: SyncOptions 
 
   const issues = getIssues(config);
   const board = parseTasksFile(tasksFilePath);
+  validateTaskStatuses(board.tasks, config);
   const byExternal = new Map(board.tasks.map(t => [t.externalId, t]));
   const existingIds = board.tasks.map(t => t.id);
   const statusByIssue = requireGhProject(config) ? buildStatusByIssue(config) : new Map<number, string>();
   const remoteToLocal = invertStatusMap(config.statusMap);
-  const defaultStatus = config.bootstrap?.defaultStatusForImportedIssues || 'backlog';
+  const defaultStatus = normalizeStatus(config.bootstrap?.defaultStatusForImportedIssues) || getAllowedStatuses(config)[0];
 
   let createdLocal = 0;
   let updatedLocal = 0;
@@ -534,7 +617,7 @@ export function bootstrapCommand(from: 'local' | 'github', options: SyncOptions 
     const remoteStatusName = statusByIssue.get(issue.number);
     const localStatus = remoteStatusName
       ? (remoteToLocal[remoteStatusName] || defaultStatus)
-      : (issue.state === 'closed' ? 'done' : defaultStatus);
+      : (issue.state === 'closed' ? closedIssueFallbackStatus(config, defaultStatus) : defaultStatus);
 
     if (!task) {
       const newId = nextTaskId(existingIds);
@@ -543,12 +626,13 @@ export function bootstrapCommand(from: 'local' | 'github', options: SyncOptions 
         id: newId,
         title: `[${newId}] ${issue.title}`,
         status: localStatus,
-        completed: issue.closed_at ? issue.closed_at.slice(0, 10) : null,
+        completed: null,
         externalId,
         updated: todayISO(),
         detail: `./tasks/${newId}.md`
       };
       applyLabelsToTask(task, issue.labels.map(l => l.name));
+      normalizeTaskCompletion(task, config, issue.closed_at ? issue.closed_at.slice(0, 10) : todayISO());
       board.tasks.push(task);
       byExternal.set(externalId, task);
       createdLocal++;
@@ -556,7 +640,7 @@ export function bootstrapCommand(from: 'local' | 'github', options: SyncOptions 
       task.title = task.title || issue.title;
       task.status = localStatus;
       applyLabelsToTask(task, issue.labels.map(l => l.name));
-      task.completed = issue.closed_at ? issue.closed_at.slice(0, 10) : null;
+      normalizeTaskCompletion(task, config, issue.closed_at ? issue.closed_at.slice(0, 10) : todayISO());
       task.updated = todayISO();
       updatedLocal++;
     }
@@ -578,6 +662,7 @@ export function reconcileCommand(taskId: string, options: SyncOptions = {}): voi
   const { config, configPath } = loadConfig(options);
   const tasksFilePath = resolveTasksFile(configPath, config, options);
   const board = parseTasksFile(tasksFilePath);
+  validateTaskStatuses(board.tasks, config);
   const state = readSyncState(tasksFilePath);
   const issues = getIssues(config);
   const issuesByNumber = new Map<number, GitHubIssue>(issues.map(i => [i.number, i]));

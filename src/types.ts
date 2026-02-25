@@ -1,4 +1,4 @@
-export type LocalStatus = 'backlog' | 'doing' | 'review' | 'done' | 'paused';
+export type LocalStatus = string;
 
 export type Task = {
   title: string;
@@ -32,11 +32,16 @@ export type SyncConfig = {
   repo: string;
   projectId?: string;
   statusFieldId?: string;
-  statusMap: Record<LocalStatus, string>;
+  startDateFieldId?: string;
+  dueDateFieldId?: string;
+  completedDateFieldId?: string;
+  statusMap: Record<string, string>;
+  allowedStatuses?: string[];
+  completionStatuses?: string[];
   tasksFile: string;
   bootstrap?: {
     createMissingDetailFiles?: boolean;
-    defaultStatusForImportedIssues?: LocalStatus;
+    defaultStatusForImportedIssues?: string;
     requireConfirmFlag?: boolean;
   };
   remoteWinsFields?: string[];
@@ -89,6 +94,19 @@ export type ProjectItemStatus = {
   issueNumber: number;
   itemId: string;
   statusName: string;
+};
+
+export type ProjectIssueItem = {
+  issueNumber: number;
+  itemId: string;
+};
+
+export type ProjectItemDates = {
+  issueNumber: number;
+  itemId: string;
+  start?: string;
+  due?: string;
+  completed?: string;
 };
 
 export type StatusReport = {

@@ -50,6 +50,39 @@ gh project field-create <project-number> --owner alotth --name Pipeline --data-t
 gh project link <project-number> --owner alotth --repo markdown-kanban-roadmap
 ```
 
+## Status workflow config snippets
+
+Default-compatible:
+
+```json
+{
+  "allowedStatuses": ["backlog", "doing", "review", "done", "paused"],
+  "completionStatuses": ["done"]
+}
+```
+
+Fully custom:
+
+```json
+{
+  "allowedStatuses": ["inbox", "design", "build", "qa", "released"],
+  "completionStatuses": ["released"],
+  "statusMap": {
+    "inbox": "Inbox",
+    "design": "Design",
+    "build": "Build",
+    "qa": "QA",
+    "released": "Released"
+  }
+}
+```
+
+Rules:
+
+- `statusMap` must cover all `allowedStatuses`
+- `completionStatuses` must be subset of `allowedStatuses`
+- GitHub Pipeline options must match `statusMap` values
+
 ## Common flags
 
 - `--config <path>`

@@ -2,6 +2,8 @@
 
 Standalone npm package + CLI to sync local `TASKS.md` with GitHub Issues and GitHub Projects (v2).
 
+Status: alpha (early adoption). APIs, config keys, and sync behavior may change between minor releases.
+
 Detailed operational guide: `DOCUMENTATION.md`.
 
 ## Install
@@ -129,6 +131,62 @@ Recommendation:
 - `milestone` <-> GitHub milestone
 - `externalId` stores issue identity in a backend-agnostic way
 
+## Status workflows (default + custom)
+
+By default, `kanban-sync-engine` uses:
+
+- `allowedStatuses`: `backlog, doing, review, done, paused`
+- `completionStatuses`: `done`
+
+You can customize this in config:
+
+- `allowedStatuses` (optional): full list of accepted local statuses.
+  - If omitted, defaults are used.
+  - If provided, only these statuses are valid.
+- `completionStatuses` (optional): statuses treated as completed.
+  - If omitted, defaults to `["done"]`.
+  - Must be a subset of `allowedStatuses`.
+
+Important alignment rule:
+
+- `statusMap` must include every status in `allowedStatuses`.
+- Your GitHub Project field options (for example `Pipeline`) must match values in `statusMap`.
+
+Default-style config example:
+
+```json
+{
+  "allowedStatuses": ["backlog", "doing", "review", "done", "paused"],
+  "completionStatuses": ["done"],
+  "statusMap": {
+    "backlog": "Backlog",
+    "doing": "Doing",
+    "review": "Review",
+    "done": "Done",
+    "paused": "Paused"
+  }
+}
+```
+
+Fully custom workflow example (no default statuses):
+
+```json
+{
+  "allowedStatuses": ["inbox", "design", "build", "qa", "released"],
+  "completionStatuses": ["released"],
+  "statusMap": {
+    "inbox": "Inbox",
+    "design": "Design",
+    "build": "Build",
+    "qa": "QA",
+    "released": "Released"
+  },
+  "bootstrap": {
+    "defaultStatusForImportedIssues": "inbox"
+  }
+}
+```
+
 Recommended for full status parity:
 
 - Create a custom Project single-select field (for example `Pipeline`) with options:
@@ -139,6 +197,13 @@ Recommended for full status parity:
   - `Paused`
 - Use that field ID in `statusFieldId` instead of the default `Status` field.
 - This avoids status collapse when the default field only has `Todo/In Progress/Done`.
+
+Recommended for Roadmap bars:
+
+- Create Project `DATE` fields for start/due (and optionally completed).
+- Set `startDateFieldId`, `dueDateFieldId`, and optionally `completedDateFieldId` in config.
+- `push` maps task `start`, `due`, and `completed` to those date fields.
+- Roadmap uses Project date fields, so issue body lines like `- start:` / `- due:` are not enough by themselves.
 
 Link project to repository (optional but recommended):
 
@@ -282,6 +347,7 @@ Use this matrix to choose the correct bootstrap mode.
 ### `kanban-sync-engine pull`
 
 - Fetches remote updates and applies remote-wins fields.
+- If date field IDs are configured, also pulls Project dates into local `start`, `due`, and `completed`.
 - Keeps local-only fields.
 - Updates `updated` and `completed` as needed.
 
